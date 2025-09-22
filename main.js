@@ -23,13 +23,27 @@ let args = parser.parse_args();
 
 if (args) {
     const logFilePath = path.resolve(process.cwd(), 'log.txt');
-    const logger = simpleLogger.createSimpleLogger(logFilePath);
+    const logger = simpleLogger.createSimpleFileLogger(logFilePath);
+    const bindConsoleEcho = (level, emitter) => {
+        const original = logger[level].bind(logger);
+        logger[level] = (...messages) => {
+            original(...messages);
+            emitter(...messages);
+        };
+    };
+
+    bindConsoleEcho('error', (...messages) => console.error(...messages));
+    bindConsoleEcho('warn', (...messages) => console.warn(...messages));
+
     logger.info(`Logging initialized. Writing output to ${logFilePath}`);
+    console.log(`Logging initialized. Writing output to ${logFilePath}`);
+
     if (args.debug)
         logger.setLevel('trace');
 
     if (args.version) {
         logger.info('Version: ' + package.version);
+        console.log('Version: ' + package.version);
         return;
     }
 
@@ -55,6 +69,7 @@ if (args) {
                 process.stdout.write('Onvif Password: ');
                 rl.question('', (password) => {
                     logger.info('Generating config ...');
+                    console.log('Generating config ...');
                     const finalize = () => {
                         mutableStdout.muted = false;
                         rl.close();
