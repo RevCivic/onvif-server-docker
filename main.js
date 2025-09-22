@@ -7,6 +7,7 @@ const readline = require('readline');
 const stream = require('stream');
 const yaml = require('yaml');
 const fs = require('fs');
+const path = require('path');
 const simpleLogger = require('simple-node-logger');
 
 const parser = new argparse.ArgumentParser({
@@ -21,7 +22,9 @@ parser.add_argument('config', { help: 'config filename to use', nargs: '?'});
 let args = parser.parse_args();
 
 if (args) {
-    const logger = simpleLogger.createSimpleLogger();
+    const logFilePath = path.resolve(process.cwd(), 'log.txt');
+    const logger = simpleLogger.createSimpleLogger(logFilePath);
+    logger.info(`Logging initialized. Writing output to ${logFilePath}`);
     if (args.debug)
         logger.setLevel('trace');
 
@@ -51,16 +54,33 @@ if (args) {
                 mutableStdout.muted = true;
                 process.stdout.write('Onvif Password: ');
                 rl.question('', (password) => {
-                    console.log('Generating config ...');
-                    configBuilder.createConfig(hostname, username, password).then((config) => {
-                        if (config) {
-                            console.log('# ==================== CONFIG START ====================');
-                            console.log(yaml.stringify(config));
-                            console.log('# ===================== CONFIG END =====================');
-                        } else
-                        console.log('Failed to create config!');
-                    });
-                    rl.close();
+                    logger.info('Generating config ...');
+                    const finalize = () => {
+                        mutableStdout.muted = false;
+                        rl.close();
+                    };
+
+                    configBuilder.createConfig(hostname, username, password, logger)
+                        .then((config) => {
+                            if (config) {
+                                logger.info('Config created successfully. Outputting generated configuration.');
+                                console.log('# ==================== CONFIG START ====================');
+                                console.log(yaml.stringify(config));
+                                console.log('# ===================== CONFIG END =====================');
+                            } else {
+                                logger.error('Config builder returned no configuration object.');
+                                console.log('Failed to create config! Check log.txt for details.');
+                            }
+                            finalize();
+                        })
+                        .catch((error) => {
+                            const message = error && error.message ? error.message : error;
+                            logger.error(`Failed to create config: ${message}`);
+                            if (error && error.stack)
+                                logger.error(error.stack);
+                            console.log('Failed to create config! Check log.txt for details.');
+                            finalize();
+                        });
                 });
             });
         });
