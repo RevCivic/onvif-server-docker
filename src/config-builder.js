@@ -55,8 +55,8 @@ async function createConfig(hostname, username, password) {
         }
     } catch (err) {
         if (err.root && err.root.Envelope && err.root.Envelope.Body && err.root.Envelope.Body.Fault && err.root.Envelope.Body.Fault.Reason && err.root.Envelope.Body.Fault.Reason.Text)
-            throw `Error: ${err.root.Envelope.Body.Fault.Reason.Text['$value']}`;
-        throw `Error: ${err.message}`;
+            throw new Error(`Error: ${err.root.Envelope.Body.Fault.Reason.Text['$value']}`);
+        throw new Error(`Error: ${err.message}`);
     }
 
     let config = {
@@ -124,28 +124,57 @@ async function createConfig(hostname, username, password) {
     return config;
 }
 
-exports.createConfig = async function(hostname, username, password) {
+exports.createConfig = async function(hostname, username, password, logger) {
 
-    let config;
+    const log = {
+        info: (message) => logger && logger.info ? logger.info(message) : console.log(message),
+        warn: (message) => logger && logger.warn ? logger.warn(message) : console.warn(message),
+        error: (message) => logger && logger.error ? logger.error(message) : console.error(message)
+    };
+
+    const toError = (err) => {
+        if (err instanceof Error)
+            return err;
+        if (typeof err === 'string')
+            return new Error(err);
+        try {
+            return new Error(JSON.stringify(err));
+        } catch (_) {
+            return new Error(String(err));
+        }
+    };
+
     try {
-        config = await createConfig(hostname, username, password);
+        return await createConfig(hostname, username, password);
     } catch (err) {
-        console.log(err);
-        if (err.includes('time check failed')) {
-            console.log('Retrying...')
+        const initialError = toError(err);
+        log.error(`Failed to create config on initial attempt: ${initialError.message}`);
+        if (initialError.stack)
+            log.error(initialError.stack);
 
-            var utcHours = (new Date()).getUTCHours();
+        if (initialError.message && initialError.message.includes('time check failed')) {
+            log.warn('Encountered time check failure. Retrying with adjusted UTC hour offset.');
+
+            const originalGetUTCHours = Date.prototype.getUTCHours;
             Date.prototype.getUTCHours = function() {
-                return utcHours + 1;
-            }
+                return originalGetUTCHours.call(this) + 1;
+            };
 
             try {
-                config = await createConfig(hostname, username, password);
-            } catch (err) {
-                console.log(err);
+                const config = await createConfig(hostname, username, password);
+                log.info('Config created successfully after retry.');
+                return config;
+            } catch (retryErr) {
+                const retryError = toError(retryErr);
+                log.error(`Retry attempt to create config failed: ${retryError.message}`);
+                if (retryError.stack)
+                    log.error(retryError.stack);
+                throw retryError;
+            } finally {
+                Date.prototype.getUTCHours = originalGetUTCHours;
             }
         }
-    }
 
-    return config;
+        throw initialError;
+    }
 }
